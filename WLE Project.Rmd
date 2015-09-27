@@ -1,0 +1,129 @@
+---
+title: "Classifying Quality - Weight Lifting Exercises Dataset"
+author: "Cristian Santa"
+output: html_document
+---
+#Introduction
+This human activity recognition research has traditionally focused on discriminating between different activities, i.e. to predict "which" activity was performed at a specific point in time (like with the Daily Living Activities dataset above). The approach we propose for the Weight Lifting Exercises dataset is to investigate "how (well)" an activity was performed by the wearer. The "how (well)" investigation has only received little attention so far, even though it potentially provides useful information for a large variety of applications,such as sports training.
+
+In this work (see the paper) we first define quality of execution and investigate three aspects that pertain to qualitative activity recognition: the problem of specifying correct execution, the automatic and robust detection of execution mistakes, and how to provide feedback on the quality of execution to the user. We tried out an on-body sensing approach (dataset here), but also an "ambient sensing approach" (by using Microsoft Kinect - dataset still unavailable)
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate. The exercises were performed by six male participants aged between 20-28 years, with little weight lifting experience. We made sure that all participants could easily simulate the mistakes in a safe and controlled manner by using a relatively light dumbbell (1.25kg).
+
+###Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: <http://groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset). 
+
+###Data 
+The training data for this project are available here: 
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>
+
+The test data are available here: 
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv>
+
+The data for this project come from this source: <http://groupware.les.inf.puc-rio.br/har>. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+#Getting and Cleaning Data
+```{r, cache=TRUE}
+suppressMessages(library(caret))
+suppressMessages(library(rpart))
+suppressMessages(library(randomForest))
+suppressMessages(library(parallel))
+suppressMessages(library(doParallel))
+
+TrainData<-read.csv('pml-training.csv',header=T,na.strings=c("NA","#DIV/0!",""))
+TestData<-read.csv('pml-testing.csv',header=T,na.strings=c("NA","#DIV/0!",""))
+
+namesTrain<-colnames(TrainData)
+namesTest<-colnames(TestData)
+```
+
+Too many columns of the dataset have NA's, so let's clean the Training and Testing Data removing the columns of the dataset.
+
+```{r, cache=TRUE}
+#count the non NA's per column of the dataset
+noNA<-as.vector(apply(TrainData, 2, function(x) length(which(!is.na(x)))))
+coldrop<-c()
+for(i in 1:length(noNA))
+{
+   if(noNA[i]<nrow(TrainData))
+   {
+      coldrop<-c(coldrop,namesTrain[i])
+   }
+}
+
+TrainData<-TrainData[,!(namesTrain %in% coldrop)]
+TrainData<-TrainData[,8:length(names(TrainData))]
+
+TestData<-TestData[,!(namesTest %in% coldrop)]
+TestData<-TestData[,8:length(names(TestData))]
+```
+
+Let's check if covariates have variability.
+
+```{r, cache=TRUE}
+nearZeroVar(TrainData,saveMetrics=T)
+```
+
+The Training Data are clean, we have 52 variables to predict the classe variable. Now let's create a partiton of the data set for fit the model.
+
+```{r, cache=TRUE}
+set.seed(201509)
+inTrain<-createDataPartition(TrainData$classe,p=0.7,list=FALSE)
+Training<-TrainData[inTrain,]
+Testing<-TrainData[-inTrain,]
+```
+
+```{r, echo=FALSE, cache=TRUE}
+qplot(classe,data=Training,geom="bar",fill=Training$classe)
+registerDoParallel(makeCluster(4))
+```
+
+In the barplot we can see that the (Class A), which corresponds to exactly according to the specification is the higher frequency, in the second place throwing the hips to the front (Class E), the elbows to the front (Class B) is in 3rd place, lifting the dumbbell only halfway (Class C) in 4th and lowering the dumbbell only halfway (Class D) is in 5th place.
+
+Let's fit the model with Tree technique for predict the class variable.
+```{r, cache=TRUE}
+model1<-train(classe~.,data=Training,method='rpart');model1
+pred1<-predict(model1,newdata=Testing)
+```
+
+```{r, echo=FALSE, cache=TRUE}
+plot(model1$finalModel)
+text(model1$finalModel,cex=.7)
+```
+
+Let's check the accuracy of the model with the confusion matrix.
+
+```{r, cache=TRUE}
+confusionMatrix(pred1,Testing$classe)
+```
+
+The Tree model way isn't accurate. Let's see another technique, for example Random Forest models.
+
+```{r, cache=TRUE}
+#set.seed(201509)
+model2<-train(classe~.,data=Training,method='rf',trControl=trainControl(method='cv',number=3));model2
+pred2<-predict(model2,newdata=Testing)
+```
+
+```{r, echo=FALSE,cache=TRUE}
+plot(model2)
+plot(model2$finalModel,main='Random Forest Model')
+varImpPlot(model2$finalModel,cex=.7,main='Random Forest Model',pch=19)
+```
+
+Let's check the accuracy of the model with the confusion matrix.
+
+```{r, cache=TRUE}
+confusionMatrix(pred2,Testing$classe)
+```
+
+The Random Forest model is highly accurate, a few classes have been lost in the prediction. The Out of Sample Error for each model with its prediction in the Testing Data are:
+
+```{r, echo=FALSE,cache=TRUE}
+list(OutSampleError_Tree=1-confusionMatrix(pred1,Testing$classe)$overall[[1]],
+     Predict_Tree=predict(model1,newdata=TestData),
+     OutSampleError_RForest=1-confusionMatrix(pred2,Testing$classe)$overall[[1]],
+     Predict_RForest=predict(model2,newdata=TestData))
+```
